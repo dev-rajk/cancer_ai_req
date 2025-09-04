@@ -10,7 +10,7 @@ import re
 # ==============================
 #   CONFIG
 # ==============================
-genai.configure(api_key="st.secrets.user.pass1")
+genai.configure(api_key=st.secrets.user.pass1)
 MODEL_NAME = "gemini-2.5-pro"
 EMBEDDING_MODEL = "models/embedding-001"
 

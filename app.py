@@ -263,12 +263,12 @@ if submitted:
     st.text_area("AI Output", formatted_text, height=500)
 
     # Optional: still show structured recommendations separately if you want
-    st.subheader("💡 Structured Recommendations")
-    if parsed_output.recommendations:
-        for i, rec in enumerate(parsed_output.recommendations, start=1):
-            st.markdown(f"**{i}. {rec.therapy_type}**")
-            st.write(rec.details)
-            if rec.level_of_evidence:
-                st.caption(f" Level of Evidence: {rec.level_of_evidence}")
-    else:
-        st.info("No structured recommendations parsed.")
+    # st.subheader("💡 Structured Recommendations")
+    # if parsed_output.recommendations:
+    #     for i, rec in enumerate(parsed_output.recommendations, start=1):
+    #         st.markdown(f"**{i}. {rec.therapy_type}**")
+    #         st.write(rec.details)
+    #         if rec.level_of_evidence:
+    #             st.caption(f" Level of Evidence: {rec.level_of_evidence}")
+    # else:
+    #     st.info("No structured recommendations parsed.")

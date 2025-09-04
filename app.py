@@ -206,21 +206,21 @@ st.title(" NCCN RAG Clinical Recommendation Assistant")
 
 with st.form("Patient Data Input"):
     # Patient Details
-    st.subheader(" Patient Details"):
+    st.subheader(" Patient Details")
     age = st.number_input("Age", min_value=0, max_value=120, step=1)
     gender = st.selectbox("Gender", ["", "Male", "Female", "Other"])
     perf_status = st.text_input("Performance Status (e.g., ECOG 0)")
     comorbidities = st.text_area("Comorbidities (comma-separated)")
 
 # Tumor Details
-    st.subheader(" Tumor Details"):
+    st.subheader(" Tumor Details")
     site = st.text_input("Tumor Site", value="oral tongue")
     histology = st.text_input("Histology", value="Carcinoma")
     stage = st.text_input("Stage", value="T1N0M0")
     molecular_features = st.text_input("Molecular Features (optional)", value="")
 
 # Prior Therapy
-    st.subheader(" Prior Therapy"):
+    st.subheader(" Prior Therapy")
     prior_given = st.checkbox("Prior therapy given?")
     therapy_type = st.text_input("Therapy Type") if prior_given else None
     therapy_details = st.text_input("Therapy Details") if prior_given else None

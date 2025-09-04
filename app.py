@@ -6,7 +6,11 @@ import google.generativeai as genai
 from pydantic import BaseModel
 from typing import List, Optional
 import re
-
+st.set_page_config(
+    page_title="Gemini Canacer Recommendation System",
+    layout="wide", 
+    page_icon=":material/oncology:"
+)
 # ==============================
 #   CONFIG
 # ==============================
@@ -198,33 +202,35 @@ def parse_ai_response(query: str, retrieved: List[str], response_text: str) -> t
 #   STREAMLIT UI
 # ==============================
 st.set_page_config(page_title="NCCN Clinical Recommendation Assistant", layout="wide")
-st.title("🧠 NCCN RAG Clinical Recommendation Assistant")
+st.title(" NCCN RAG Clinical Recommendation Assistant")
 
-st.sidebar.header("Structured Patient Input")
-
-# Patient Details
-with st.sidebar.expander("👤 Patient Details"):
+with st.form("Patient Data Input"):
+    # Patient Details
+    st.subheader(" Patient Details"):
     age = st.number_input("Age", min_value=0, max_value=120, step=1)
     gender = st.selectbox("Gender", ["", "Male", "Female", "Other"])
     perf_status = st.text_input("Performance Status (e.g., ECOG 0)")
     comorbidities = st.text_area("Comorbidities (comma-separated)")
 
 # Tumor Details
-with st.sidebar.expander("🧬 Tumor Details"):
+    st.subheader(" Tumor Details"):
     site = st.text_input("Tumor Site", value="oral tongue")
     histology = st.text_input("Histology", value="Carcinoma")
     stage = st.text_input("Stage", value="T1N0M0")
     molecular_features = st.text_input("Molecular Features (optional)", value="")
 
 # Prior Therapy
-with st.sidebar.expander("💊 Prior Therapy"):
+    st.subheader(" Prior Therapy"):
     prior_given = st.checkbox("Prior therapy given?")
     therapy_type = st.text_input("Therapy Type") if prior_given else None
     therapy_details = st.text_input("Therapy Details") if prior_given else None
+    submitted = st.form_submit_button(" Get Recommendations")
 
-if st.button("🔍 Get Recommendations"):
+if submitted:
+    # Load FAISS artifacts
     index, embeddings, text_chunks = load_artifacts()
 
+    # Build structured query
     patient = Patient(
         age=age if age > 0 else None,
         gender=gender if gender else None,
@@ -248,23 +254,21 @@ if st.button("🔍 Get Recommendations"):
     query = build_query_from_structured_input(patient, tumor, prior_therapy)
     retrieved_chunks = retrieve_chunks(query, index, text_chunks)
     response_text = generate_rag_response(query, retrieved_chunks)
-    parsed_output = parse_ai_response(query, retrieved_chunks, response_text)
 
-    # Display results
-    st.subheader("💡 AI Recommendations")
+    # Get both structured and formatted outputs
+    parsed_output, formatted_text = parse_ai_response(query, retrieved_chunks, response_text)
+
+    # Display results in a neat format
+    st.subheader(" Formatted AI Output")
+    st.text_area("AI Output", formatted_text, height=500)
+
+    # Optional: still show structured recommendations separately if you want
+    st.subheader("💡 Structured Recommendations")
     if parsed_output.recommendations:
         for i, rec in enumerate(parsed_output.recommendations, start=1):
             st.markdown(f"**{i}. {rec.therapy_type}**")
             st.write(rec.details)
             if rec.level_of_evidence:
-                st.caption(f"📄 Level of Evidence: {rec.level_of_evidence}")
+                st.caption(f" Level of Evidence: {rec.level_of_evidence}")
     else:
-        st.info("No structured recommendations were parsed. See full response below.")
-
-    st.subheader("📜 Full AI Response")
-    st.text_area("Generated Response", response_text, height=800)
-
-    st.subheader("🔍 Retrieved Context")
-    for i, chunk in enumerate(retrieved_chunks, start=1):
-        st.markdown(f"**Chunk {i}:** {chunk[:500]}...")
-
+        st.info("No structured recommendations parsed.")

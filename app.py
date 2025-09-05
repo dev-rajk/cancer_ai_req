@@ -6,11 +6,8 @@ import google.generativeai as genai
 from pydantic import BaseModel
 from typing import List, Optional
 import re
-st.set_page_config(
-    page_title="Gemini Canacer Recommendation System",
-    layout="wide", 
-    page_icon=":material/oncology:"
-)
+import time
+
 # ==============================
 #   CONFIG
 # ==============================
@@ -30,12 +27,14 @@ class Patient(BaseModel):
     gender: Optional[str] = None
     performance_status: Optional[str] = None
     comorbidities: Optional[List[str]] = None
+    additional_notes: Optional[str] = None   
 
 class Tumor(BaseModel):
     site: str
     histology: str
     stage: str
     molecular_features: Optional[str] = None
+    imaging_findings: Optional[str] = None   
 
 class PriorTherapy(BaseModel):
     therapy_type: str
@@ -65,11 +64,16 @@ def load_artifacts():
 
 def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_therapy: Optional[PriorTherapy] = None) -> str:
     query_parts = []
+
+    # Tumor details
     tumor_info = f"{tumor.histology} of the {tumor.site}, stage {tumor.stage}"
     if tumor.molecular_features:
         tumor_info += f" with {tumor.molecular_features}"
+    if tumor.imaging_findings:  # NEW ✅
+        tumor_info += f". Imaging findings: {tumor.imaging_findings}"
     query_parts.append(tumor_info)
 
+    # Patient details
     patient_info = []
     if patient.age:
         patient_info.append(f"age {patient.age}")
@@ -82,6 +86,11 @@ def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_ther
     if patient_info:
         query_parts.append("in a " + ", ".join(patient_info))
 
+    # Extra clinical notes
+    if patient.additional_notes:  # NEW ✅
+        query_parts.append(f"Additional clinical notes: {patient.additional_notes}")
+
+    # Prior therapy, if any
     if prior_therapy:
         prior_text = f"with prior therapy {prior_therapy.therapy_type}"
         if prior_therapy.details:
@@ -201,7 +210,7 @@ def parse_ai_response(query: str, retrieved: List[str], response_text: str) -> t
 # ==============================
 #   STREAMLIT UI
 # ==============================
-st.set_page_config(page_title="NCCN Clinical Recommendation Assistant", layout="wide")
+st.set_page_config(page_title="NCCN Clinical Recommendation Assistant", layout="wide", page_icon=":material/oncology:")
 st.title(" NCCN RAG Clinical Recommendation Assistant")
 
 with st.form("Patient Data Input"):
@@ -211,6 +220,7 @@ with st.form("Patient Data Input"):
     gender = st.selectbox("Gender", ["", "Male", "Female", "Other"])
     perf_status = st.text_input("Performance Status (e.g., ECOG 0)")
     comorbidities = st.text_area("Comorbidities (comma-separated)")
+    extra_notes = st.text_area("Other clinical details (optional)", value="")  
 
 # Tumor Details
     st.subheader(" Tumor Details")
@@ -218,7 +228,8 @@ with st.form("Patient Data Input"):
     histology = st.text_input("Histology", value="Carcinoma")
     stage = st.text_input("Stage", value="T1N0M0")
     molecular_features = st.text_input("Molecular Features (optional)", value="")
-
+    imaging_findings = st.text_area("Imaging Findings (optional)", value="")
+    
 # Prior Therapy
     st.subheader(" Prior Therapy")
     prior_given = st.checkbox("Prior therapy given?")
@@ -230,37 +241,42 @@ if submitted:
     # Load FAISS artifacts
     index, embeddings, text_chunks = load_artifacts()
 
-    # Build structured query
+    # Build patient object
     patient = Patient(
         age=age if age > 0 else None,
         gender=gender if gender else None,
         performance_status=perf_status if perf_status else None,
         comorbidities=[c.strip() for c in comorbidities.split(",")] if comorbidities else None,
+        additional_notes=extra_notes if extra_notes else None,  # NEW ✅
     )
 
+    # Build tumor object
     tumor = Tumor(
         site=site,
         histology=histology,
         stage=stage,
         molecular_features=molecular_features if molecular_features else None,
+        imaging_findings=imaging_findings if imaging_findings else None,  # NEW ✅
     )
 
+    # Prior therapy object
     prior_therapy = (
         PriorTherapy(therapy_type=therapy_type, details=therapy_details)
         if prior_given else None
     )
-
+    start_time = time.time()
     # Build query and run RAG
     query = build_query_from_structured_input(patient, tumor, prior_therapy)
     retrieved_chunks = retrieve_chunks(query, index, text_chunks)
     response_text = generate_rag_response(query, retrieved_chunks)
-
+    processing_time = time.time() - start_time
     # Get both structured and formatted outputs
     parsed_output, formatted_text = parse_ai_response(query, retrieved_chunks, response_text)
 
     # Display results in a neat format
     st.subheader(" Formatted AI Output")
     st.text_area("AI Output", formatted_text, height=1000)
+    st.caption(f"⏱️ Response generated in **{processing_time:.2f} seconds**")
 
     # Optional: still show structured recommendations separately if you want
     # st.subheader("💡 Structured Recommendations")

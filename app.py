@@ -222,8 +222,8 @@ with st.form("Patient Data Input"):
 # Prior Therapy
     st.subheader(" Prior Therapy")
     prior_given = st.checkbox("Prior therapy given?")
-    therapy_type = st.text_input("Therapy Type") if prior_given else None
-    therapy_details = st.text_input("Therapy Details") if prior_given else None
+    therapy_type = st.text_input("Therapy Type") #if prior_given else None
+    therapy_details = st.text_input("Therapy Details") #if prior_given else None
     submitted = st.form_submit_button(" Get Recommendations")
 
 if submitted:
@@ -260,7 +260,7 @@ if submitted:
 
     # Display results in a neat format
     st.subheader(" Formatted AI Output")
-    st.text_area("AI Output", formatted_text, height=500)
+    st.text_area("AI Output", formatted_text, height=1000)
 
     # Optional: still show structured recommendations separately if you want
     # st.subheader("💡 Structured Recommendations")

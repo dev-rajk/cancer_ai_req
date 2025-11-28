@@ -12,7 +12,7 @@ import time
 #   CONFIG
 # ==============================
 genai.configure(api_key=st.secrets.user.pass1)
-MODEL_NAME = "gemini-2.5-pro"
+MODEL_NAME = "gemini-2.5-flash"
 EMBEDDING_MODEL = "models/embedding-001"
 
 INDEX_PATH = "./files/faiss_index.bin"

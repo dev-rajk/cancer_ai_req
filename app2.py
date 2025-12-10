@@ -19,7 +19,7 @@ else:
     st.error("Missing API Key in secrets.toml")
 
 # UPDATED: Using the Pro model and the newer Embedding model
-MODEL_NAME = "gemini-2.5-pro"  # Use "gemini-1.5-pro" for best reasoning (or "gemini-2.0-flash-exp" if available)
+MODEL_NAME = "gemini-2.5-flash"  # Use "gemini-1.5-pro" for best reasoning (or "gemini-2.0-flash-exp" if available)
 EMBEDDING_MODEL = "models/gemini-embedding-001" # Matches your new Colab index
 
 # PORTS (Preserved exactly as requested)

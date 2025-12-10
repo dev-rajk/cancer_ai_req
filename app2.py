@@ -16,7 +16,7 @@ from google.api_core.exceptions import ResourceExhausted
 # ==============================
 genai.configure(api_key=st.secrets.user.pass1)
 MODEL_NAME = "gemini-2.5-flash"
-EMBEDDING_MODEL = "models/embedding-001"
+EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 INDEX_PATH = "./files/faiss_index.bin"
 EMBEDDINGS_PATH = "./files/embeddings.npy"

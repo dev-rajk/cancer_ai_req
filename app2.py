@@ -115,25 +115,36 @@ def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_ther
         + "?"
     )
 
-def retrieve_chunks_with_retry(query: str, index, chunks: List[str], top_k: int = 3):
+def retrieve_chunks_with_retry(query: str, index, chunks: List[str], top_k: int = 5): # Increased to top_k=5
     """
-    Retrieves chunks with exponential backoff to handle Rate Limits (429).
+    Retrieves chunks with backoff and FILTERS OUT short/copyright noise.
     """
     retries = 0
-    max_retries = 3
-    wait_time = 2
+    max_retries = 5
+    wait_time = 4
 
     while retries < max_retries:
         try:
-            # Task type MUST be retrieval_query for the new model
+            # Generate embedding
             query_embedding = genai.embed_content(
                 model=EMBEDDING_MODEL,
                 content=query,
                 task_type="retrieval_query"
             )["embedding"]
             
+            # Search FAISS
             distances, indices = index.search(np.array(query_embedding, dtype="float32").reshape(1, -1), top_k)
-            return [chunks[i] for i in indices[0]]
+            
+            # --- NEW FILTERING LOGIC ---
+            valid_chunks = []
+            for i in indices[0]:
+                chunk_text = chunks[i]
+                # Skip if it looks like a copyright footer or is too short
+                if len(chunk_text) < 50 or "All Rights Reserved" in chunk_text:
+                    continue
+                valid_chunks.append(chunk_text)
+            
+            return valid_chunks[:3] # Return top 3 CLEAN chunks
 
         except Exception as e:
             if "429" in str(e) or "ResourceExhausted" in str(e):
@@ -147,7 +158,6 @@ def retrieve_chunks_with_retry(query: str, index, chunks: List[str], top_k: int 
     
     st.error("Failed to retrieve chunks due to rate limits.")
     return []
-
 def generate_rag_response_with_retry(query: str, retrieved_chunks: List[str]):
     """
     Generates response with exponential backoff to handle Rate Limits (429).
@@ -156,7 +166,7 @@ def generate_rag_response_with_retry(query: str, retrieved_chunks: List[str]):
     prompt = f"Based on the following NCCN guideline excerpts:\n\n{context}\n\nAnswer:\n{query}"
     
     retries = 0
-    max_retries = 3
+    max_retries = 5
     wait_time = 4 # Pro models are slower, start with higher wait
 
     while retries < max_retries:

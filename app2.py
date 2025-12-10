@@ -7,21 +7,25 @@ from pydantic import BaseModel
 from typing import List, Optional
 import re
 import time
-import random
-from google.api_core.exceptions import ResourceExhausted
-
+from google.api_core import exceptions
 
 # ==============================
 #   CONFIG
 # ==============================
-genai.configure(api_key=st.secrets.user.pass1)
-MODEL_NAME = "gemini-2.5-flash"
-EMBEDDING_MODEL = "models/gemini-embedding-001"
+# Ensure your secrets.toml has [user] pass1 = "YOUR_API_KEY"
+if "user" in st.secrets and "pass1" in st.secrets.user:
+    genai.configure(api_key=st.secrets.user.pass1)
+else:
+    st.error("Missing API Key in secrets.toml")
 
+# UPDATED: Using the Pro model and the newer Embedding model
+MODEL_NAME = "gemini-2.5-pro"  # Use "gemini-1.5-pro" for best reasoning (or "gemini-2.0-flash-exp" if available)
+EMBEDDING_MODEL = "models/gemini-embedding-001" # Matches your new Colab index
+
+# PORTS (Preserved exactly as requested)
 INDEX_PATH = "./files/faiss_index.bin"
 EMBEDDINGS_PATH = "./files/embeddings.npy"
 CHUNKS_PATH = "./files/text_chunks.pkl"
-
 
 # ==============================
 #   DATA MODELS
@@ -31,27 +35,23 @@ class Patient(BaseModel):
     gender: Optional[str] = None
     performance_status: Optional[str] = None
     comorbidities: Optional[List[str]] = None
-    additional_notes: Optional[str] = None   
-
+    additional_notes: Optional[str] = None    
 
 class Tumor(BaseModel):
     site: str
     histology: str
     stage: str
     molecular_features: Optional[str] = None
-    imaging_findings: Optional[str] = None   
-
+    imaging_findings: Optional[str] = None    
 
 class PriorTherapy(BaseModel):
     therapy_type: str
     details: Optional[str] = None
 
-
 class Recommendation(BaseModel):
     therapy_type: str
     details: str
     level_of_evidence: Optional[str] = None
-
 
 class AIOutput(BaseModel):
     query: str
@@ -59,36 +59,20 @@ class AIOutput(BaseModel):
     generated_response: str
     recommendations: List[Recommendation]
 
-
 # ==============================
 #   UTILITIES
 # ==============================
 @st.cache_resource
 def load_artifacts():
-    index = faiss.read_index(INDEX_PATH)
-    embeddings = np.load(EMBEDDINGS_PATH)
-    with open(CHUNKS_PATH, "rb") as f:
-        chunks = pickle.load(f)
-    return index, embeddings, chunks
-
-
-# ------------------------------
-# retry wrapper for inference
-# ------------------------------
-def safe_call(func, max_retries=5):
-    for retry in range(max_retries):
-        try:
-            return func()
-        except Exception as e:
-            rate = "429" in str(e) or isinstance(e, ResourceExhausted)
-            if rate:
-                wait = (2 ** retry) + random.random()
-                st.warning(f"⚠️ Rate limited. Retrying in {wait:.1f}s…")
-                time.sleep(wait)
-            else:
-                raise
-    raise RuntimeError("❗ LLM failed repeatedly due to rate limiting.")
-
+    try:
+        index = faiss.read_index(INDEX_PATH)
+        embeddings = np.load(EMBEDDINGS_PATH)
+        with open(CHUNKS_PATH, "rb") as f:
+            chunks = pickle.load(f)
+        return index, embeddings, chunks
+    except FileNotFoundError as e:
+        st.error(f"Artifact not found: {e}. Please upload faiss_index.bin, embeddings.npy, and text_chunks.pkl to ./files/")
+        return None, None, None
 
 def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_therapy: Optional[PriorTherapy] = None) -> str:
     query_parts = []
@@ -97,7 +81,7 @@ def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_ther
     tumor_info = f"{tumor.histology} of the {tumor.site}, stage {tumor.stage}"
     if tumor.molecular_features:
         tumor_info += f" with {tumor.molecular_features}"
-    if tumor.imaging_findings:  
+    if tumor.imaging_findings:
         tumor_info += f". Imaging findings: {tumor.imaging_findings}"
     query_parts.append(tumor_info)
 
@@ -115,7 +99,7 @@ def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_ther
         query_parts.append("in a " + ", ".join(patient_info))
 
     # Extra clinical notes
-    if patient.additional_notes:  
+    if patient.additional_notes:
         query_parts.append(f"Additional clinical notes: {patient.additional_notes}")
 
     # Prior therapy, if any
@@ -131,35 +115,74 @@ def build_query_from_structured_input(patient: Patient, tumor: Tumor, prior_ther
         + "?"
     )
 
+def retrieve_chunks_with_retry(query: str, index, chunks: List[str], top_k: int = 3):
+    """
+    Retrieves chunks with exponential backoff to handle Rate Limits (429).
+    """
+    retries = 0
+    max_retries = 3
+    wait_time = 2
 
-def retrieve_chunks(query: str, index, chunks: List[str], top_k: int = 3):
-    query_embedding = genai.embed_content(
-        model=EMBEDDING_MODEL,
-        content=query,
-        task_type="retrieval_query"
-    )["embedding"]
-    distances, indices = index.search(np.array(query_embedding, dtype="float32").reshape(1, -1), top_k)
-    return [chunks[i] for i in indices[0]]
+    while retries < max_retries:
+        try:
+            # Task type MUST be retrieval_query for the new model
+            query_embedding = genai.embed_content(
+                model=EMBEDDING_MODEL,
+                content=query,
+                task_type="retrieval_query"
+            )["embedding"]
+            
+            distances, indices = index.search(np.array(query_embedding, dtype="float32").reshape(1, -1), top_k)
+            return [chunks[i] for i in indices[0]]
 
+        except Exception as e:
+            if "429" in str(e) or "ResourceExhausted" in str(e):
+                st.warning(f"Embedding rate limit hit. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                retries += 1
+                wait_time *= 2
+            else:
+                st.error(f"Embedding Error: {e}")
+                return []
+    
+    st.error("Failed to retrieve chunks due to rate limits.")
+    return []
 
-# ------------------------------
-#  patched inference
-# ------------------------------
-def generate_rag_response(query: str, retrieved_chunks: List[str]):
+def generate_rag_response_with_retry(query: str, retrieved_chunks: List[str]):
+    """
+    Generates response with exponential backoff to handle Rate Limits (429).
+    """
     context = "\n".join(retrieved_chunks)
     prompt = f"Based on the following NCCN guideline excerpts:\n\n{context}\n\nAnswer:\n{query}"
-    model = genai.GenerativeModel(MODEL_NAME)
+    
+    retries = 0
+    max_retries = 3
+    wait_time = 4 # Pro models are slower, start with higher wait
 
-    response = safe_call(lambda: model.generate_content(prompt))
-    return response.text
-
+    while retries < max_retries:
+        try:
+            model = genai.GenerativeModel(MODEL_NAME)
+            return model.generate_content(prompt).text
+            
+        except Exception as e:
+            if "429" in str(e) or "ResourceExhausted" in str(e):
+                st.warning(f"Generation rate limit hit. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                retries += 1
+                wait_time *= 2
+            else:
+                return f"Error generating response: {e}"
+                
+    return "Error: specific generation quota exceeded. Please try again in a minute."
 
 def parse_ai_response(query: str, retrieved: List[str], response_text: str) -> tuple[AIOutput, str]:
     """
     Parses AI output into a structured AIOutput object and also produces a clean, 
     human-readable multiline string for display or logging.
     """
-
+    # -------------------------
+    # Structured Recommendation Parsing
+    # -------------------------
     recs = []
     rec_pattern = re.compile(r'^[\-\*\+\d\.]\s*(.*)', re.MULTILINE)
     level_pattern = re.compile(r'Level of evidence: (.*)', re.IGNORECASE)
@@ -197,6 +220,9 @@ def parse_ai_response(query: str, retrieved: List[str], response_text: str) -> t
             if level_match and last_idx >= 0:
                 recs[last_idx].level_of_evidence = level_match.group(1).strip()
 
+    # -------------------------
+    # Build AIOutput object
+    # -------------------------
     ai_output = AIOutput(
         query=query,
         retrieved_context=retrieved,
@@ -204,9 +230,13 @@ def parse_ai_response(query: str, retrieved: List[str], response_text: str) -> t
         recommendations=recs
     )
 
+    # -------------------------
+    # Build Readable Output String
+    # -------------------------
     divider = "─" * 60
     formatted_output = [f"{divider}\nQUERY:\n{query}\n{divider}"]
 
+    # Retrieved chunks
     formatted_output.append("RETRIEVED CONTEXT:\n")
     for i, chunk in enumerate(retrieved, start=1):
         snippet = chunk.strip().replace("\n", " ")
@@ -214,15 +244,16 @@ def parse_ai_response(query: str, retrieved: List[str], response_text: str) -> t
             snippet = snippet[:400] + "..."
         formatted_output.append(f"  [{i}] {snippet}\n")
 
-    formatted_output.append(f"{divider}\nAI-GENERATED RESPONSE:\n{response_text.strip()}\n{divider}")
+    formatted_output.append(f"{divider}\nAI-GENERATED RESPONSE ({MODEL_NAME}):\n{response_text.strip()}\n{divider}")
 
+    # Recommendations
     if recs:
         formatted_output.append("STRUCTURED RECOMMENDATIONS:\n")
         for i, rec in enumerate(recs, start=1):
             formatted_output.append(
                 f"  {i}. {rec.therapy_type}\n"
-                f"     Details: {rec.details}\n"
-                f"     Level of Evidence: {rec.level_of_evidence or 'Not specified'}\n"
+                f"      Details: {rec.details}\n"
+                f"      Level of Evidence: {rec.level_of_evidence or 'Not specified'}\n"
             )
     else:
         formatted_output.append("No structured recommendations parsed.")
@@ -239,6 +270,7 @@ st.set_page_config(page_title="NCCN Clinical Recommendation Assistant", layout="
 st.title(" NCCN RAG Clinical Recommendation Assistant")
 
 with st.form("Patient Data Input"):
+    # Patient Details
     st.subheader(" Patient Details")
     age = st.number_input("Age", min_value=0, max_value=120, step=1)
     gender = st.selectbox("Gender", ["", "Male", "Female", "Other"])
@@ -246,7 +278,7 @@ with st.form("Patient Data Input"):
     comorbidities = st.text_area("Comorbidities (comma-separated)")
     extra_notes = st.text_area("Other clinical details (optional)", value="")  
 
-
+    # Tumor Details
     st.subheader(" Tumor Details")
     site = st.text_input("Tumor Site", value="oral tongue")
     histology = st.text_input("Histology", value="Carcinoma")
@@ -254,44 +286,62 @@ with st.form("Patient Data Input"):
     molecular_features = st.text_input("Molecular Features (optional)", value="")
     imaging_findings = st.text_area("Imaging Findings (optional)", value="")
     
+    # Prior Therapy
     st.subheader(" Prior Therapy")
     prior_given = st.checkbox("Prior therapy given?")
     therapy_type = st.text_input("Therapy Type") 
-    therapy_details = st.text_input("Therapy Details")  
+    therapy_details = st.text_input("Therapy Details") 
     submitted = st.form_submit_button(" Get Recommendations")
 
-
 if submitted:
+    # Load FAISS artifacts
     index, embeddings, text_chunks = load_artifacts()
 
-    patient = Patient(
-        age=age if age > 0 else None,
-        gender=gender if gender else None,
-        performance_status=perf_status if perf_status else None,
-        comorbidities=[c.strip() for c in comorbidities.split(",")] if comorbidities else None,
-        additional_notes=extra_notes if extra_notes else None,  
-    )
+    if index is not None:
+        # Build patient object
+        patient = Patient(
+            age=age if age > 0 else None,
+            gender=gender if gender else None,
+            performance_status=perf_status if perf_status else None,
+            comorbidities=[c.strip() for c in comorbidities.split(",")] if comorbidities else None,
+            additional_notes=extra_notes if extra_notes else None, 
+        )
 
-    tumor = Tumor(
-        site=site,
-        histology=histology,
-        stage=stage,
-        molecular_features=molecular_features if molecular_features else None,
-        imaging_findings=imaging_findings if imaging_findings else None,  
-    )
+        # Build tumor object
+        tumor = Tumor(
+            site=site,
+            histology=histology,
+            stage=stage,
+            molecular_features=molecular_features if molecular_features else None,
+            imaging_findings=imaging_findings if imaging_findings else None, 
+        )
 
-    prior_therapy = (
-        PriorTherapy(therapy_type=therapy_type, details=therapy_details)
-        if prior_given else None
-    )
+        # Prior therapy object
+        prior_therapy = (
+            PriorTherapy(therapy_type=therapy_type, details=therapy_details)
+            if prior_given else None
+        )
+        
+        start_time = time.time()
+        
+        # Build query
+        query = build_query_from_structured_input(patient, tumor, prior_therapy)
+        
+        with st.spinner("Retrieving clinical guidelines..."):
+            retrieved_chunks = retrieve_chunks_with_retry(query, index, text_chunks)
+        
+        if retrieved_chunks:
+            with st.spinner(f"Generating recommendations with {MODEL_NAME}..."):
+                response_text = generate_rag_response_with_retry(query, retrieved_chunks)
+            
+            processing_time = time.time() - start_time
+            
+            # Get both structured and formatted outputs
+            parsed_output, formatted_text = parse_ai_response(query, retrieved_chunks, response_text)
 
-    start_time = time.time()
-    query = build_query_from_structured_input(patient, tumor, prior_therapy)
-    retrieved_chunks = retrieve_chunks(query, index, text_chunks)
-    response_text = generate_rag_response(query, retrieved_chunks)
-    processing_time = time.time() - start_time
-    parsed_output, formatted_text = parse_ai_response(query, retrieved_chunks, response_text)
-
-    st.subheader(" Formatted AI Output")
-    st.text_area("AI Output", formatted_text, height=1000)
-    st.caption(f"⏱️ Response generated in **{processing_time:.2f} seconds**")
+            # Display results in a neat format
+            st.subheader(" Formatted AI Output")
+            st.text_area("AI Output", formatted_text, height=1000)
+            st.caption(f"⏱️ Response generated in **{processing_time:.2f} seconds**")
+        else:
+            st.error("Could not retrieve context. Please check your document index.")

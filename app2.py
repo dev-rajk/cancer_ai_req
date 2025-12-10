@@ -23,9 +23,9 @@ MODEL_NAME = "gemini-2.5-pro"  # Use "gemini-1.5-pro" for best reasoning (or "ge
 EMBEDDING_MODEL = "models/gemini-embedding-001" # Matches your new Colab index
 
 # PORTS (Preserved exactly as requested)
-INDEX_PATH = "./files/faiss_index.bin"
-EMBEDDINGS_PATH = "./files/embeddings.npy"
-CHUNKS_PATH = "./files/text_chunks.pkl"
+INDEX_PATH = "./files/faiss_index (2).bin"
+EMBEDDINGS_PATH = "./files/embeddings (2).npy"
+CHUNKS_PATH = "./files/text_chunks (2).pkl"
 
 # ==============================
 #   DATA MODELS

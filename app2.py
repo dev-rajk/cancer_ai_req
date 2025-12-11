@@ -19,7 +19,7 @@ else:
     st.error("Missing API Key in secrets.toml")
 
 # UPDATED: Using the Pro model and the newer Embedding model
-MODEL_NAME = "gemini-2.5-flash"  # Use "gemini-1.5-pro" for best reasoning (or "gemini-2.0-flash-exp" if available)
+MODEL_NAME = "gemini-2.5-pro"  # Use "gemini-1.5-pro" for best reasoning (or "gemini-2.0-flash-exp" if available)
 EMBEDDING_MODEL = "models/gemini-embedding-001" # Matches your new Colab index
 
 # PORTS (Preserved exactly as requested)
@@ -120,8 +120,8 @@ def retrieve_chunks_with_retry(query: str, index, chunks: List[str], top_k: int 
     Retrieves chunks with backoff and FILTERS OUT short/copyright noise.
     """
     retries = 0
-    max_retries = 5
-    wait_time = 10
+    max_retries = 8
+    wait_time = 2
 
     while retries < max_retries:
         try:
@@ -166,12 +166,14 @@ def generate_rag_response_with_retry(query: str, retrieved_chunks: List[str]):
     prompt = f"Based on the following NCCN guideline excerpts:\n\n{context}\n\nAnswer:\n{query}"
     
     retries = 0
-    max_retries = 5
-    wait_time = 10 # Pro models are slower, start with higher wait
+    max_retries = 9
+    wait_time = 15 # Pro models are slower, start with higher wait
+    init_wait = 5
 
     while retries < max_retries:
         try:
             model = genai.GenerativeModel(MODEL_NAME)
+            time.sleep(init_wait)
             return model.generate_content(prompt).text
             
         except Exception as e:

@@ -168,7 +168,7 @@ def generate_rag_response_with_retry(query: str, retrieved_chunks: List[str]):
     retries = 0
     max_retries = 9
     wait_time = 15 # Pro models are slower, start with higher wait
-    init_wait = 5
+    init_wait = 13
 
     while retries < max_retries:
         try:
